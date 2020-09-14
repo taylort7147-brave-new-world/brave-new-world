@@ -271,8 +271,8 @@ if __name__ == "__main__":
     
     # Get revision
     revision = get_revision()
-    client_package_filename = f"brave-new-world-client-{revision}.zip"
-    server_package_filename = f"brave-new-world-server-{revision}.zip"
+    client_package_filename = "brave-new-world-client.zip"
+    server_package_filename = "brave-new-world-server.zip"
     
     # Create revision.txt file
     build_steps.append(GenericBuildStep(logger, lambda: create_version_file(revision), name="Create revision file"))
