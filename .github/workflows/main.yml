@@ -33,9 +33,9 @@ jobs:
       - uses: actions/upload-artifact@v2
         with:
           name: client
-          path: $GITHUB_WORKSPACE/build/brave-new-world-client.zip
+          path: build/brave-new-world-client.zip
       
       - uses: actions/upload-artifact@v2
         with:
           name: server
-          path: $GITHUB_WORKSPACE/build/brave-new-world-server.zip
+          path: build/brave-new-world-server.zip
