@@ -265,8 +265,8 @@ if __name__ == "__main__":
     numErrors = 0
     buildFailed = False
     
-    client_package_filename = "brave-new-world-client.zip"
-    server_package_filename = "brave-new-world-server.zip"
+    client_package_filename = "client.zip"
+    server_package_filename = "server.zip"
     
     # Create revision.txt file
     build_steps.append(GenericBuildStep(logger, lambda: create_version_file(revision), name="Create revision file"))
