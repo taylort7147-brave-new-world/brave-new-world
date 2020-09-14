@@ -1,0 +1,4 @@
+*.zip
+*.log
+build/*
+revision.txt
