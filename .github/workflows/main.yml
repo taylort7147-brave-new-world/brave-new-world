@@ -27,7 +27,7 @@ jobs:
       - name: build-packages
         run: |
           cd $GITHUB_WORKSPACE
-          python3 build.py
+          python3 build.py --revision=$GITHUB_SHA
       
       # Upload zipped packages
       - uses: actions/upload-artifact@v2

@@ -8,6 +8,7 @@ import re
 import zipfile
 import subprocess
 import json
+import argparse
 
 ROOT_DIR = abspath(dirname(__file__))
 BUILD_DIR = join(dirname(__file__), "build")
@@ -226,17 +227,6 @@ def load_ignore_list(filename):
             ignoreList.append(line)
     return ignoreList
 
-def get_revision():   
-    pipe = subprocess.Popen(
-        ["git", "rev-parse", "HEAD"],
-        stdout=subprocess.PIPE,
-        cwd=dirname(__file__),
-        universal_newlines=True
-    )
-    revision = str(pipe.stdout.read())
-    revision = re.search("[0-9a-fA-F]+", revision).group()
-    return revision
-    
 def create_version_file(revision):
     with open(REVISION_PATH, "w") as file:
         file.write(revision)
@@ -250,6 +240,12 @@ def get_mod_list(mod_dict, keys):
 
  
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser("build.py")
+    parser.add_argument("--revision", type=str.lower, default="dirty")
+
+    args = parser.parse_args(sys.argv[1:])
+    revision = args.revision
+
     if not isdir(BUILD_DIR):
         os.makedirs(BUILD_DIR)
     log_filename = join(BUILD_DIR, LOG_FILENAME)
@@ -269,8 +265,6 @@ if __name__ == "__main__":
     numErrors = 0
     buildFailed = False
     
-    # Get revision
-    revision = get_revision()
     client_package_filename = "brave-new-world-client.zip"
     server_package_filename = "brave-new-world-server.zip"
     
@@ -321,4 +315,3 @@ if __name__ == "__main__":
         
     
         
-    
