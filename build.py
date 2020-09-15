@@ -11,7 +11,8 @@ import json
 import argparse
 
 ROOT_DIR = abspath(dirname(__file__))
-BUILD_DIR = join(dirname(__file__), "build")
+BUILD_DIR = join(ROOT_DIR, "build")
+LOG_DIR = join(ROOT_DIR, "logs")
 LOG_FILENAME = "build.log"
 FILE_LOG_FORMAT = "[%(asctime)s][%(name)s][%(levelname)s]: %(message)s"
 CONSOLE_LOG_FORMAT = "[%(name)s][%(levelname)s]: %(message)s"
@@ -41,29 +42,34 @@ class GenericBuildStep(BuildStep):
     def __init__(self, logger, callback, name=None, stop_on_fail=True):
         super().__init__(logger, name=name, stop_on_fail=stop_on_fail)
         self.execute = callback
-        
-class CommandLineBuildStep(BuildStep):
-    def __init__(self, logger, command, name=None, stop_on_fail=True):
-        super().__init__(logger, name=name, stop_on_fail=stop_on_fail)
-        self.command = command
-            
+
+class CleanBuildStep(BuildStep):
+    def __init__(self, logger, dir_, **kwargs):
+        super().__init__(logger, **kwargs)
+        self.dir = dir_
+
     def execute(self):
-        self._logger.info("Executing build step: {}".format(self.name))
-        self.result = os.system(self.command)
-        if self.result != 0 and self._stop_on_fail:
-            raise RuntimeError("The build step failed with error code: {}".format(self.result))
-        self._logger.info("Completed build step: {}".format(self.name))   
-        
+        if not isdir(self.dir):
+            raise FileNotFoundError(f"Directory does not exist: {self.dir}")
+        for filename in os.listdir(self.dir):
+            file_path = join(self.dir, filename)
+            self._logger.info(f"Deleting {file_path}")
+            if isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+            elif isdir(file_path):
+                shutil.rmtree(file_path)
+
+
 class CopyFilesBuildStep(BuildStep):
-    def __init__(self, logger, source_dir, dest_dir, create_dest_dir=True, recursive=False, regex=".*", name=None, stop_on_fail=True):
+    def __init__(self, logger, root, files, dest_dir, create_dest_dir=True, name=None, stop_on_fail=True):
         super().__init__(logger, name=name, stop_on_fail=stop_on_fail)
-        self.source_dir = source_dir
+        self.files = files
         self.dest_dir = dest_dir
         self.create_dest_dir = create_dest_dir
-        self.recursive = recursive
-        self.regex = regex
+        self.root = root
     
     def execute(self):
+        copy_count = 0
         if not isdir(self.dest_dir):
             if self.create_dest_dir:
                 self._logger.info("Creating destination directory: {}".format(self.dest_dir))
@@ -71,148 +77,15 @@ class CopyFilesBuildStep(BuildStep):
             else:
                 raise FileNotFoundError("Destination does not exist: {}".format(self.dest_dir))
             
-        self._logger.info("Copying files from {} to {}".format(self.source_dir, self.dest_dir))
-        matches = []
-        for root, dirnames, filenames in os.walk(self.source_dir):
-            for filename in filenames:
-                if re.search(self.regex, filename, flags=re.IGNORECASE):
-                    matches.append(os.path.join(root, filename))
-            if not self.recursive:
-                break
-                
-        for file in matches:
-            dest_filename = join(self.dest_dir, relpath(file, start=self.source_dir))
+        for file in self.files:
+            dest_filename = join(self.dest_dir, relpath(file, start=self.root))
             self._logger.info("Copying {} to {}".format(file, dest_filename))
             if not isdir(dirname(dest_filename)):
                 os.makedirs(dirname(dest_filename))
             shutil.copy2(file, dest_filename)
+            copy_count += 1
+        self._logger.info(f"Copied {copy_count} files")
 
-            
-class DeleteFilesBuildStep(BuildStep):
-    def __init__(self, logger, directory, regex="*", recursive=False, name=None, stop_on_fail=True):
-        super().__init__(logger, name=name, stop_on_fail=stop_on_fail)
-        self.directory = directory
-        self.regex = regex
-        self.recursive = recursive
-        
-    def execute(self):
-        relative_path = relpath(self.directory)
-    
-        # Guard against deleting files in directories which are not subdirectories.
-        if ".." in relative_path:
-            raise ValueError("The path must be a subdirectory of the current directory")
-        
-        self._logger.info("Deleting files in directory: {}".format(self.directory))
-        matches = []
-        dir_matches = []
-        for root, dirnames, filenames in os.walk(self.directory):
-            for filename in filenames:
-                if re.search(self.regex, filename, flags=re.IGNORECASE):
-                    matches.append(os.path.join(root, filename))
-            for dir in dirnames:
-                if re.search(self.regex, dir, flags=re.IGNORECASE):
-                    dir_matches.append(os.path.join(root, dir))
-            if not self.recursive:
-                break
-                
-        for file in matches:
-            self._logger.info("Deleting file {}".format(file))
-            os.remove(file)
-                
-        for dir in dir_matches:
-            self._logger.info("Deleting directory {}".format(dir))
-            shutil.rmtree(dir)  
-
-            
-class RenameFileBuildStep(BuildStep):
-    def __init__(self, logger, source_dir, dest_filename , create_dest_dir=True, regex=".*", name=None, stop_on_fail=True):
-        super().__init__(logger, name=name, stop_on_fail=stop_on_fail)
-        self.source_dir = source_dir
-        self.dest_filename = dest_filename
-        self.create_dest_dir = create_dest_dir
-        self.regex = regex
-    
-    def execute(self):
-        if not isdir(dirname(self.dest_filename)):
-            if self.create_dest_dir:
-                self._logger.info("Creating destination directory: {}".format(dirname(self.dest_filename)))
-                os.makedirs(dirname(dirname(self.dest_filename)))
-            else:
-                raise FileNotFoundError("Destination does not exist: {}".format(dirname(self.dest_filename)))
-        source_file = None
-        for root, dirnames, filenames in os.walk(self.source_dir):
-            for filename in filenames:
-                if re.search(self.regex, filename, flags=re.IGNORECASE):
-                    source_file = os.path.join(root, filename)
-        if source_file is None:
-            raise FileNotFoundError("Failed to find a file matching the regex \"{}\"".format(self.regex))
-        self._logger.info("Renaming {} to {}".format(source_file, self.dest_filename))
-        shutil.move(source_file, self.dest_filename)
-        
- 
-class ExtractFilesBuildStep(BuildStep):
-    def __init__(self, logger, zip_file, dest_dir, create_dest_dir=True, name=None, stop_on_fail=True):
-        super().__init__(logger, name=name, stop_on_fail=stop_on_fail)
-        self.zip_file = zip_file
-        self.dest_dir = dest_dir
-        self.create_dest_dir = create_dest_dir
-        
-    def execute(self):
-        if not isdir(self.dest_dir):
-            if self.create_dest_dir:
-                self._logger.info("Creating destination directory: {}".format(self.dest_dir))
-                os.makedirs(self.dest_dir)
-            else:
-                raise FileNotFoundError("Destination does not exist: {}".format(self.dest_dir))
-                
-        self._logger.info("Extracting {} to {}".format(self.zip_file, self.dest_dir))
-        with zipfile.ZipFile(self.zip_file,"r") as z:
-            z.extractall(self.dest_dir)
- 
- 
-class ZipFilesBuildStep(BuildStep):
-    def __init__(self, logger, zip_file, source_dir, dest_dir, root, relative_path=None, create_dest_dir=True, recursive=False, regex=".*", name=None, stop_on_fail=True, mode="w"):
-        super().__init__(logger, name=name, stop_on_fail=stop_on_fail)
-        self.zip_file = zip_file
-        self.source_dir = source_dir
-        self.dest_dir = dest_dir
-        self.root = root
-        self.create_dest_dir = create_dest_dir
-        self.regex = regex
-        self.recursive = recursive
-        self.mode = mode
-        self.relative_path = relative_path
-        
-    def execute(self):
-        if not isdir(self.dest_dir):
-            if self.create_dest_dir:
-                self._logger.info("Creating destination directory: {}".format(self.dest_dir))
-                os.makedirs(self.dest_dir)
-            else:
-                raise FileNotFoundError("Destination does not exist: {}".format(self.dest_dir))
-                
-        self._logger.info("Collecting files from {}".format(self.source_dir))
-        matches = []
-        for root, dirnames, filenames in os.walk(self.source_dir):
-            for filename in filenames:
-                filename = relpath(join(root, filename), start=self.root)
-                if re.search(self.regex, filename, flags=re.IGNORECASE):
-                    self._logger.debug("Found match: {}".format(filename))
-                    matches.append(filename)
-            if not self.recursive:
-                break
-                
-        full_zip_filename = join(self.dest_dir, self.zip_file)
-        self._logger.info("Creating zip file: {}".format(full_zip_filename))
-        with zipfile.ZipFile(full_zip_filename, self.mode, zipfile.ZIP_DEFLATED) as z:
-            for file in matches:
-                dest_filename = relpath(file, start=self.root)
-                arc_name = None
-                if self.relative_path is not None:
-                    arc_name = relpath(file, self.relative_path)
-                self._logger.info("   Zipping {}".format(dest_filename))
-                z.write(dest_filename, arcname=arc_name)
-  
   
 def load_ignore_list(filename):
     ignoreList = []
@@ -248,7 +121,11 @@ if __name__ == "__main__":
 
     if not isdir(BUILD_DIR):
         os.makedirs(BUILD_DIR)
-    log_filename = join(BUILD_DIR, LOG_FILENAME)
+
+    if not isdir(LOG_DIR):
+        os.makedirs(LOG_DIR)
+
+    log_filename = join(LOG_DIR, LOG_FILENAME)
     logger = logging.getLogger("build")
     console_handler = logging.StreamHandler(stream=sys.stdout)
     console_handler_formatter = logging.Formatter(fmt=CONSOLE_LOG_FORMAT, datefmt=DATE_FORMAT)
@@ -265,28 +142,35 @@ if __name__ == "__main__":
     numErrors = 0
     buildFailed = False
     
-    client_package_filename = "client.zip"
-    server_package_filename = "server.zip"
+    # Clean
+    build_steps.append(CleanBuildStep(logger, BUILD_DIR, name="Clean build directory"))
     
     # Create revision.txt file
     build_steps.append(GenericBuildStep(logger, lambda: create_version_file(revision), name="Create revision file"))
     
-    # Zip into package
+    bin_files = glob.glob(join(BIN_DIR, "*.*"))
+    mod_files = glob.glob(join(MOD_DIR, "*.*"))
+    client_files = glob.glob(join(ROOT_DIR, "client", "**/*.*"))
+    server_files = glob.glob(join(ROOT_DIR, "server", "**/*.*"))
+    revision_files = [join(REVISION_DIR, REVISION_FILENAME)]
+
+    client_dir = join(ROOT_DIR, "client")
+    server_dir = join(ROOT_DIR, "server")
+
+    client_package_dir = join(BUILD_DIR, "client")
+    server_package_dir = join(BUILD_DIR, "server")
 
     # Package client
-    build_steps.append(ZipFilesBuildStep(logger, client_package_filename, REVISION_DIR, BUILD_DIR, ROOT_DIR, regex=re.escape(REVISION_FILENAME), recursive=False, name="Zip revision.txt"))
-    client_dir = join(ROOT_DIR, "client")
-    build_steps.append(ZipFilesBuildStep(logger, client_package_filename, client_dir, BUILD_DIR, ROOT_DIR, relative_path=client_dir, recursive=True, name="Zip client", mode="a"))
-    build_steps.append(ZipFilesBuildStep(logger, client_package_filename, MOD_DIR, BUILD_DIR, ROOT_DIR, recursive=True, name="Zip client mods", mode="a"))
-    build_steps.append(ZipFilesBuildStep(logger, client_package_filename, BIN_DIR, BUILD_DIR, ROOT_DIR, recursive=True, name="Zip client bin", mode="a"))
-
+    build_steps.append(CopyFilesBuildStep(logger, REVISION_DIR, revision_files, client_package_dir, name="Copy revision file"))
+    build_steps.append(CopyFilesBuildStep(logger, client_dir, client_files, client_package_dir, name="Copy client"))
+    build_steps.append(CopyFilesBuildStep(logger, ROOT_DIR, bin_files, client_package_dir, name="Copy bin/ to client"))
+    build_steps.append(CopyFilesBuildStep(logger, ROOT_DIR, mod_files, client_package_dir, name="Copy mods/ to client"))
 
     # Package server
-    build_steps.append(ZipFilesBuildStep(logger, server_package_filename, REVISION_DIR, BUILD_DIR, ROOT_DIR, regex=re.escape(REVISION_FILENAME), recursive=False, name="Zip revision.txt"))
-    server_dir = join(ROOT_DIR, "server")
-    build_steps.append(ZipFilesBuildStep(logger, server_package_filename, server_dir, BUILD_DIR, ROOT_DIR, relative_path=server_dir, recursive=True, name="Zip server", mode="a"))
-    build_steps.append(ZipFilesBuildStep(logger, server_package_filename, MOD_DIR, BUILD_DIR, ROOT_DIR, recursive=True, name="Zip server mods", mode="a"))
-    build_steps.append(ZipFilesBuildStep(logger, server_package_filename, BIN_DIR, BUILD_DIR, ROOT_DIR, relative_path=BIN_DIR, recursive=True, name="Zip server bin", mode="a"))
+    build_steps.append(CopyFilesBuildStep(logger, REVISION_DIR, revision_files, server_package_dir, name="Copy revision file"))
+    build_steps.append(CopyFilesBuildStep(logger, server_dir, server_files, server_package_dir, name="Copy server"))
+    build_steps.append(CopyFilesBuildStep(logger, BIN_DIR, bin_files, server_package_dir, name="Copy bin/ to server"))
+    build_steps.append(CopyFilesBuildStep(logger, ROOT_DIR, mod_files, server_package_dir, name="Copy mods/ to server"))
        
     try:
         logger.info("Root directory: {}".format(ROOT_DIR))

@@ -33,9 +33,9 @@ jobs:
       - uses: actions/upload-artifact@v2
         with:
           name: client
-          path: build/client.zip
+          path: build/client
       
       - uses: actions/upload-artifact@v2
         with:
           name: server
-          path: build/server.zip
+          path: build/server
